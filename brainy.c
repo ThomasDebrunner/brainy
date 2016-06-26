@@ -3,16 +3,95 @@
 #define INITIAL_HEAP 100
 #define HEAP_STEP 10
 
+size_t heap_size;
+char* heap;     /* heap */
+char* p;        /* current heap pointer */
+char* progmem;  /* instruction buffer */
+char* ip;       /* instruction pointer */
 
 /*
- * Resizes the given heap
+ * Resizes the the heap
  */
-void resize_heap(char *heap, size_t old_size, size_t new_size) {
-  realloc(heap, new_size);
+void resize_heap(size_t old_size, size_t new_size) {
+  heap = realloc(heap, new_size);
   /* clear out new heap space */
   while(old_size < new_size)
     heap[old_size++] = 0;
 }
+
+/*
+ * Advances the instruction pointer after the matching parenthesis
+ */
+void seek_match() {
+  int depth = 1;
+  while(depth > 0) {
+    ip++;
+    if(*ip == '[') depth++;
+    if(*ip == ']') depth--;
+  }
+  ip++;
+}
+
+/*
+ * Interprets the program. The parameter rp specifies the
+ * address of the last '[' character. Used for jumping back in loops.
+ * Gets called recursively
+ */
+void interpret(char* rp) {
+  char instr;
+  while((instr = *(ip++))) {
+      switch(instr) {
+          case '+':
+              (*p)++;
+              break;
+
+          case '-':
+              (*p)--;
+              break;
+
+          case '>':
+              if(p-heap+1 >= heap_size) {
+                resize_heap(heap_size, heap_size + HEAP_STEP);
+                heap_size += HEAP_STEP;
+              }
+              p++;
+              break;
+
+          case '<':
+              p--;
+              break;
+
+          case '.':
+              putchar(*p);
+              break;
+
+          case ',':
+              *p = getchar();
+              break;
+
+          case '[':
+              /* special case if we need to skip loop. Seek to corresponding ']' */
+              if(*p == 0)
+                seek_match();
+
+              /* Normal case, evaluate the loop. Call recursively and put the
+               * current address onto the stack for looping back */
+              else
+                interpret(ip);
+              break;
+
+          case ']':
+              /* If 0, we loop is finished. give control back to parent */
+              if(*p == 0)
+                return;
+              /* Not 0 yet. jump back to beginning of loop */
+              else
+                ip = rp;
+              break;
+      }
+  }
+}
+
 
 /*
  * Program that interprets a Brainfuck program given
@@ -34,74 +113,24 @@ int main(int argc, char *argv[]) {
     f_size = ftell( fp );
     rewind(fp);
 
-    /* read file in */
-    char* inst_buff = (char*)calloc(f_size+1, 1);
+    /* create program memory */
+    progmem = (char*)calloc(f_size+1, 1);
+    /* set instruction pointer to beginning of instruction memory */
+    ip = progmem;
 
-    fread(inst_buff, 1, f_size, fp);
+    /* read the file in */
+    fread(progmem, 1, f_size, fp);
     fclose(fp);
 
-    /* create heap */
-    size_t heap_size = INITIAL_HEAP;
-    int pos = 0;
-    char* heap = (char*)calloc(heap_size, 1);
+    /* initialize heap */
+    heap_size = INITIAL_HEAP;
+    heap = (char*)calloc(heap_size, 1);
+    p = heap;
 
-    /* set instruction pointer to beginning */
-    char* instr_p = inst_buff;
-
-    /* interpret the file */
-    char instr;
-    while((instr = *(instr_p++))) {
-        switch(instr) {
-            case '+':
-                heap[pos]++;
-                break;
-
-            case '-':
-                heap[pos]--;
-                break;
-
-            case '>':
-                pos++;
-                if(pos >= heap_size) {
-                  resize_heap(heap, heap_size, heap_size + HEAP_STEP);
-                  heap_size += HEAP_STEP;
-                }
-                break;
-
-            case '<':
-                pos--;
-                if(pos < 0) {
-                    fputs("Negative memory accessed", stderr);
-                    exit(1);
-                }
-                break;
-
-            case '.':
-                putchar(heap[pos]);
-                break;
-
-            case ',':
-                heap[pos] = getchar();
-                break;
-
-            case '[':
-                if(heap[pos] == 0)
-                    while(*(instr_p++) != ']');
-                break;
-
-            case ']':
-                if(heap[pos] != 0) {
-                    while(*(--instr_p) != '[');
-                }
-                break;
-
-            default:
-                break;
-        }
-    }
+    interpret(0);
 
     /* release heap */
     free(heap);
-    free(inst_buff);
+    free(progmem);
     exit(0);
 }
